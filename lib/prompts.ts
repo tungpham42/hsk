@@ -23,3 +23,10 @@ export const generateHSKPrompt = (level: string) => {
     Nội dung phải phù hợp với từ vựng HSK ${level}. Đảm bảo tiếng Việt tự nhiên.
   `;
 };
+
+export const generateWritingPrompt = (level: string) => {
+  return `List 8 single Chinese characters (Hanzi) specifically for HSK Level ${level}. 
+  Return ONLY a JSON array of strings. 
+  Example: ["爱", "我", "书", "水", "人"].
+  Do not explain.`;
+};

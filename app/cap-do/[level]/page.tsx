@@ -11,18 +11,22 @@ import {
   Tabs,
   Input,
   Space,
+  Tag,
+  message,
 } from "antd";
+// Đảm bảo import đúng hàm generateWritingPrompt vừa tạo (hoặc viết trực tiếp)
 import { fetchQuiz } from "@/lib/api";
-import { generateHSKPrompt } from "@/lib/prompts";
+import { generateHSKPrompt, generateWritingPrompt } from "@/lib/prompts";
 import { Question } from "@/types";
 import QuestionCard from "@/components/QuestionCard";
-import HanziPlayer from "@/components/HanziPlayer"; // Đảm bảo bạn đã tạo component này
+import HanziPlayer from "@/components/HanziPlayer";
 import {
   LeftOutlined,
   ReloadOutlined,
   ReadOutlined,
   EditOutlined,
   SearchOutlined,
+  BulbOutlined,
 } from "@ant-design/icons";
 
 const { Title, Text } = Typography;
@@ -40,9 +44,11 @@ export default function PracticePage() {
   const [score, setScore] = useState(0);
 
   // --- States cho phần TẬP VIẾT ---
-  const [writingChar, setWritingChar] = useState("爱"); // Chữ mặc định
+  const [writingChar, setWritingChar] = useState("爱");
+  const [suggestedChars, setSuggestedChars] = useState<string[]>([]); // Danh sách gợi ý
+  const [writingLoading, setWritingLoading] = useState(false); // Loading cho phần viết
 
-  // --- Logic Load Đề (AI) ---
+  // --- Logic Load Đề (Quiz) ---
   const loadQuestions = async () => {
     setLoading(true);
     setCompleted(false);
@@ -58,7 +64,7 @@ export default function PracticePage() {
       const parsedData: Question[] = JSON.parse(jsonString);
       setQuestions(parsedData);
     } catch (error) {
-      console.error("Parse Error or API Error", error);
+      console.error("Parse Quiz Error", error);
     } finally {
       setLoading(false);
     }
@@ -67,6 +73,32 @@ export default function PracticePage() {
   useEffect(() => {
     if (level) loadQuestions();
   }, [level]); // eslint-disable-line
+
+  // --- Logic Load Gợi Ý Từ Vựng (Writing) ---
+  const handleGetWritingSuggestions = async () => {
+    setWritingLoading(true);
+    try {
+      // Gọi API với prompt xin từ vựng đơn lẻ
+      const prompt = generateWritingPrompt(level);
+      const rawResult = await fetchQuiz(prompt); // Tận dụng hàm fetchQuiz (bản chất là gọi AI)
+
+      const jsonMatch = rawResult.match(/\[[\s\S]*\]/);
+      const jsonString = jsonMatch ? jsonMatch[0] : rawResult;
+
+      const chars: string[] = JSON.parse(jsonString);
+
+      if (Array.isArray(chars) && chars.length > 0) {
+        setSuggestedChars(chars);
+        setWritingChar(chars[0]); // Tự động chọn chữ đầu tiên
+        message.success("Đã tạo danh sách từ vựng mới!");
+      }
+    } catch (error) {
+      console.error("Parse Writing Error", error);
+      message.error("Không lấy được từ vựng, vui lòng thử lại.");
+    } finally {
+      setWritingLoading(false);
+    }
+  };
 
   // --- Handlers Trắc Nghiệm ---
   const handleNext = () => {
@@ -78,9 +110,7 @@ export default function PracticePage() {
   };
 
   const handleAnswer = (isCorrect: boolean) => {
-    if (isCorrect) {
-      setScore((prev) => prev + 1);
-    }
+    if (isCorrect) setScore((prev) => prev + 1);
   };
 
   // --- Render Content: Quiz Mode ---
@@ -98,7 +128,6 @@ export default function PracticePage() {
             style={{
               marginTop: 24,
               color: "#7c7572",
-              fontSize: 16,
               fontFamily: "var(--font-vi-serif)",
             }}
           >
@@ -107,34 +136,21 @@ export default function PracticePage() {
         </Flex>
       );
     }
-
+    // ... (Giữ nguyên phần hiển thị kết quả quiz của bạn)
     if (completed) {
       const percentage = Math.round((score / questions.length) * 100);
       return (
         <Flex align="center" justify="center" style={{ padding: 24 }}>
           <Result
             status={percentage >= 50 ? "success" : "warning"}
-            title={
-              <span
-                style={{ fontFamily: "var(--font-vi-serif)", color: "#3c3836" }}
-              >
-                {percentage >= 50 ? "Chúc mừng bạn!" : "Cần cố gắng hơn!"}
-              </span>
-            }
-            subTitle={
-              <div style={{ fontSize: 16 }}>
-                Bạn đã hoàn thành bộ đề HSK {level}.<br />
-                <b>
-                  Điểm số: {score} / {questions.length}
-                </b>{" "}
-                ({percentage}%)
-              </div>
-            }
+            title={`${
+              percentage >= 50 ? "Chúc mừng bạn!" : "Cần cố gắng hơn!"
+            }`}
+            subTitle={`Điểm số: ${score} / ${questions.length} (${percentage}%)`}
             extra={[
               <Button
-                type="primary"
                 key="retry"
-                size="large"
+                type="primary"
                 icon={<ReloadOutlined />}
                 onClick={loadQuestions}
               >
@@ -162,10 +178,10 @@ export default function PracticePage() {
                 showInfo={false}
                 strokeColor="#7da87b"
                 railColor="#e6e2dd"
-                style={{ marginTop: 8 }}
               />
             </div>
             <QuestionCard
+              key={currentIndex}
               data={questions[currentIndex]}
               onNext={handleNext}
               onAnswer={handleAnswer}
@@ -176,45 +192,85 @@ export default function PracticePage() {
     );
   };
 
-  // --- Render Content: Writing Mode ---
+  // --- Render Content: Writing Mode (ĐÃ CẬP NHẬT) ---
   const renderWritingContent = () => {
     return (
-      <Flex vertical align="center" gap="large" style={{ padding: "20px 0" }}>
-        <Space direction="vertical" align="center">
-          <Text
-            style={{
-              fontFamily: "var(--font-vi-serif)",
-              fontSize: 16,
-              color: "#555",
-            }}
-          >
-            Nhập chữ Hán bạn muốn tập viết (ví dụ: 我, 你, HSK...)
-          </Text>
-          <Input.Search
-            placeholder="Nhập 1 chữ Hán..."
-            enterButton={<Button icon={<SearchOutlined />}>Đổi chữ</Button>}
-            size="large"
-            style={{ maxWidth: 300 }}
-            onSearch={(val) => {
-              if (val) setWritingChar(val[0]);
-            }}
-            maxLength={1}
-          />
+      <Flex vertical align="center" gap="middle" style={{ padding: "20px 0" }}>
+        {/* Khu vực điều khiển */}
+        <Space
+          direction="vertical"
+          align="center"
+          size="large"
+          style={{ width: "100%" }}
+        >
+          <Flex gap="small" wrap="wrap" justify="center">
+            <Input.Search
+              placeholder="Nhập thủ công..."
+              enterButton={<Button icon={<SearchOutlined />}>Đổi</Button>}
+              onSearch={(val) => {
+                if (val) setWritingChar(val[0]);
+              }}
+              maxLength={1}
+              style={{ width: 200 }}
+            />
+
+            <Button
+              type="primary"
+              icon={writingLoading ? <Spin size="small" /> : <BulbOutlined />}
+              onClick={handleGetWritingSuggestions}
+              disabled={writingLoading}
+              style={{ backgroundColor: "#faad14" }}
+            >
+              {writingLoading ? "Đang tìm..." : "AI Gợi ý từ vựng"}
+            </Button>
+          </Flex>
+
+          {/* Danh sách gợi ý từ AI */}
+          {suggestedChars.length > 0 && (
+            <div style={{ textAlign: "center", maxWidth: 600 }}>
+              <Text
+                type="secondary"
+                style={{ fontSize: 12, display: "block", marginBottom: 8 }}
+              >
+                Click vào chữ bên dưới để tập viết:
+              </Text>
+              <Flex wrap="wrap" gap="8px" justify="center">
+                {suggestedChars.map((char, idx) => (
+                  <Tag.CheckableTag
+                    key={idx}
+                    checked={writingChar === char}
+                    onChange={() => setWritingChar(char)}
+                    style={{
+                      fontSize: 18,
+                      padding: "4px 12px",
+                      border:
+                        writingChar === char
+                          ? "1px solid #1677ff"
+                          : "1px solid #d9d9d9",
+                    }}
+                  >
+                    {char}
+                  </Tag.CheckableTag>
+                ))}
+              </Flex>
+            </div>
+          )}
         </Space>
 
         {/* Component Tập Viết */}
         <div style={{ marginTop: 20 }}>
-          <HanziPlayer character={writingChar} size={300} />
+          <HanziPlayer key={writingChar} character={writingChar} size={300} />
         </div>
 
         <Text type="secondary" style={{ fontSize: 12 }}>
-          * Hệ thống sẽ chấm điểm từng nét viết của bạn.
+          * Hệ thống chấm điểm từng nét. Bấm &ldquo;AI Gợi ý&rdquo; để lấy từ
+          mới theo HSK {level}.
         </Text>
       </Flex>
     );
   };
 
-  // --- Main Render ---
+  // --- Main Render (Giữ nguyên structure cũ) ---
   return (
     <div
       style={{
@@ -223,15 +279,11 @@ export default function PracticePage() {
         backgroundColor: "var(--bg-paper)",
       }}
     >
-      {/* Header Area */}
+      {/* Header Area... (Giữ nguyên như code cũ) */}
       <Flex
         justify="space-between"
         align="center"
-        style={{
-          width: "100%",
-          maxWidth: 900,
-          margin: "0 auto 16px auto",
-        }}
+        style={{ width: "100%", maxWidth: 900, margin: "0 auto 16px auto" }}
       >
         <Button
           type="text"
@@ -249,7 +301,6 @@ export default function PracticePage() {
               letterSpacing: 2,
               color: "#d97757",
               textTransform: "uppercase",
-              marginBottom: 4,
               margin: 0,
             }}
           >
@@ -266,7 +317,7 @@ export default function PracticePage() {
             Practice Room
           </Title>
         </div>
-        <div style={{ width: 64 }}></div> {/* Spacer để cân đối header */}
+        <div style={{ width: 64 }}></div>
       </Flex>
 
       {/* Tabs Layout */}
@@ -281,7 +332,7 @@ export default function PracticePage() {
               key: "quiz",
               label: (
                 <span style={{ fontFamily: "var(--font-vi-serif)" }}>
-                  <ReadOutlined /> Luyện Đề (Quiz)
+                  <ReadOutlined /> Trắc Nghiệm
                 </span>
               ),
               children: renderQuizContent(),
@@ -290,7 +341,7 @@ export default function PracticePage() {
               key: "writing",
               label: (
                 <span style={{ fontFamily: "var(--font-vi-serif)" }}>
-                  <EditOutlined /> Tập Viết (Writing)
+                  <EditOutlined /> Tập Viết
                 </span>
               ),
               children: renderWritingContent(),
